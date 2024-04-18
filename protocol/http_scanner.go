@@ -2,12 +2,12 @@ package protocol
 
 import (
 	"fmt"
-	"github.com/s-rah/onionscan/config"
-	"github.com/s-rah/onionscan/report"
+	"onionscanv3/config"
+	"onionscanv3/report"
 
-	"github.com/s-rah/onionscan/spider"
-	"github.com/s-rah/onionscan/utils"
 	"net/http"
+	"onionscanv3/spider"
+	"onionscanv3/utils"
 )
 
 type HTTPProtocolScanner struct {
@@ -15,13 +15,14 @@ type HTTPProtocolScanner struct {
 }
 
 func (hps *HTTPProtocolScanner) ScanProtocol(hiddenService string, osc *config.OnionScanConfig, report *report.OnionScanReport) {
-
+	//检查连接
 	// HTTP
 	osc.LogInfo(fmt.Sprintf("Checking %s http(80)\n", hiddenService))
 	conn, err := utils.GetNetworkConnection(hiddenService, 80, osc.TorProxyAddress, osc.Timeout)
 	if conn != nil {
 		conn.Close()
 	}
+	//有服务则爬取
 	if err != nil {
 		osc.LogInfo("Failed to connect to service on port 80\n")
 		report.WebDetected = false

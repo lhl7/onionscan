@@ -1,9 +1,9 @@
 package deanonymization
 
 import (
-	"github.com/s-rah/onionscan/config"
-	"github.com/s-rah/onionscan/report"
 	"net/url"
+	"onionscanv3/config"
+	"onionscanv3/report"
 	"strings"
 )
 

@@ -2,8 +2,8 @@ package steps
 
 import (
 	"fmt"
-	"github.com/s-rah/onionscan/report"
 	"log"
+	"onionscanv3/report"
 	"os"
 	"time"
 )

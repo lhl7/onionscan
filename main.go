@@ -3,18 +3,19 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/s-rah/onionscan/config"
-	"github.com/s-rah/onionscan/deanonymization"
-	"github.com/s-rah/onionscan/onionscan"
-	"github.com/s-rah/onionscan/onionscan/steps"
-	"github.com/s-rah/onionscan/report"
-	"github.com/s-rah/onionscan/utils"
-	"github.com/s-rah/onionscan/webui"
-	"golang.org/x/crypto/ssh/terminal"
 	"io/ioutil"
 	"log"
+	"onionscanv3/config"
+	"onionscanv3/deanonymization"
+	"onionscanv3/onionscan"
+	"onionscanv3/onionscan/steps"
+	"onionscanv3/report"
+	"onionscanv3/utils"
+	"onionscanv3/webui"
 	"os"
 	"strings"
+
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 func main() {
@@ -60,17 +61,17 @@ func main() {
 	}
 
 	onionScan.Config = config.Configure(*torProxyAddress, *directoryDepth, *fingerprint, *timeout, *dbdir, scanslist, *crawlconfigdir, *cookiestring, *verbose)
-
+	//scan 和 analysis 两个 mode
 	if *mode == "scan" {
 		if !*simpleReport && !*jsonReport && !*jsonSimpleReport {
 			log.Fatalf("You must set one of --simpleReport or --jsonReport or --jsonSimpleReport in scan mode")
 		}
-
+		//检查代理
 		proxyStatus := utils.CheckTorProxy(*torProxyAddress)
 		if proxyStatus != utils.ProxyStatusOK {
 			log.Fatalf("%s, is the --torProxyAddress setting correct?", utils.ProxyStatusMessage(proxyStatus))
 		}
-
+		//读取列表
 		onionsToScan := []string{}
 		if *list == "" {
 			onionsToScan = append(onionsToScan, flag.Args()[0])
@@ -87,6 +88,7 @@ func main() {
 			log.Printf("Starting Scan of %d onion services\n", len(onionsToScan))
 		}
 		log.Printf("This might take a few minutes..\n\n")
+		// 主函数 doScanMode
 		if *webport > 0 {
 			go doScanMode(onionScan, onionsToScan, *batch, *reportFile, *simpleReport, *jsonReport, *jsonSimpleReport)
 		} else {

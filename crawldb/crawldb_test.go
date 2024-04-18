@@ -16,7 +16,8 @@ func TestCrawlDB(t *testing.T) {
 	defer os.RemoveAll(dbdir)
 
 	db := new(CrawlDB)
-	db.NewDB(dbdir)
+	db.NewDB("root:root@tcp(127.0.0.1:3306)/mysql?charset=utf8mb4")
+
 	_, err = db.InsertCrawlRecord("https://example.onion", nil)
 	if err != nil {
 		t.Errorf("Crawl record was not stored in the database!")

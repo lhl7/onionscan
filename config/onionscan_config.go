@@ -3,9 +3,9 @@ package config
 import (
 	"bufio"
 	"fmt"
-	"github.com/s-rah/onionscan/crawldb"
 	"log"
 	"net/http"
+	"onionscanv3/crawldb"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +36,7 @@ func Configure(torProxyAddress string, directoryDepth int, fingerprint bool, tim
 	osc.Timeout = time.Duration(time.Second * time.Duration(timeout))
 	osc.Verbose = verbose
 	osc.Database = new(crawldb.CrawlDB)
-	osc.Database.NewDB(database)
+	osc.Database.NewDB("onion:123456@tcp(127.0.0.1:3306)/Onion?charset=utf8mb4")
 	osc.RescanDuration = time.Hour * -100
 	osc.Scans = scans
 	osc.CrawlConfigs = make(map[string]CrawlConfig)

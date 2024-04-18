@@ -2,9 +2,9 @@ package onionscan
 
 import (
 	"fmt"
-	"github.com/s-rah/onionscan/config"
-	"github.com/s-rah/onionscan/protocol"
-	"github.com/s-rah/onionscan/report"
+	"onionscanv3/config"
+	"onionscanv3/protocol"
+	"onionscanv3/report"
 	"time"
 )
 
@@ -34,6 +34,7 @@ func (os *OnionScan) GetAllActions() []string {
 }
 
 // PerformNextAction  determined which scan to run next, and runs it.
+// 默认配置按照这个次序进行扫描
 func (os *OnionScan) PerformNextAction(report *report.OnionScanReport, nextAction string) error {
 	switch nextAction {
 	case "web":

@@ -2,12 +2,13 @@ package deanonymization
 
 import (
 	"bytes"
+	"net/url"
+	"onionscanv3/config"
+	"onionscanv3/report"
+	"strings"
+
 	"github.com/rwcarlsen/goexif/exif"
 	"github.com/rwcarlsen/goexif/tiff"
-	"github.com/s-rah/onionscan/config"
-	"github.com/s-rah/onionscan/report"
-	"net/url"
-	"strings"
 )
 
 // ExifWalker captures functionality to process all exif data obtained from an image.

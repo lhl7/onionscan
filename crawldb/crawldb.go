@@ -1,90 +1,118 @@
 package crawldb
 
 import (
+	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"github.com/HouzuoGuo/tiedot/db"
-	"github.com/s-rah/onionscan/model"
 	"log"
+	"onionscanv3/model"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 // CrawlDB is the main interface for persistent storage in OnionScan
 type CrawlDB struct {
-	myDB *db.DB
+	myDB *sql.DB
 }
 
-// NewDB creates new new CrawlDB instance. If the database does not exist at the
-// given dbdir, it will be created.
-func (cdb *CrawlDB) NewDB(dbdir string) {
-	db, err := db.OpenDB(dbdir)
+// NewDB creates a new CrawlDB instance. If the database does not exist at the
+// given dbURL, it will be created.
+func (cdb *CrawlDB) NewDB(dbURL string) {
+	db, err := sql.Open("mysql", dbURL)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	cdb.myDB = db
 
-	//If we have just created this db then it will be empty
-	if len(cdb.myDB.AllCols()) == 0 {
-		cdb.Initialize()
+	// If we have just created this db, then it will be empty
+	if err := cdb.initialize(); err != nil {
+		log.Fatal(err)
 	}
-
 }
 
-// Initialize sets up a new database - should only be called when creating a
+// initialize sets up a new database - should only be called when creating a
 // new database.
 // There is a lot of indexing here, which may seem overkill - but on a large
 // OnionScan run these indexes take up < 100MB each - which is really cheap
 // when compared with their search potential.
-func (cdb *CrawlDB) Initialize() {
-	log.Printf("Creating Database Bucket crawls...")
-	if err := cdb.myDB.Create("crawls"); err != nil {
-		panic(err)
+func (cdb *CrawlDB) initialize() error {
+	// Creating Database Bucket crawls
+	_, err := cdb.myDB.Exec(`
+		CREATE TABLE IF NOT EXISTS crawls (
+			ID INT AUTO_INCREMENT PRIMARY KEY,
+			URL VARCHAR(255),
+			Timestamp TIMESTAMP,
+			Page TEXT
+		)
+	`)
+	if err != nil {
+		return err
 	}
 
 	// Allow searching by the URL
-	log.Printf("Indexing URL in crawls...")
-	crawls := cdb.myDB.Use("crawls")
-	if err := crawls.Index([]string{"URL"}); err != nil {
-		panic(err)
+	_, err = cdb.myDB.Exec(`
+		CREATE INDEX IF NOT EXISTS crawls_url_index ON crawls (URL)
+	`)
+	if err != nil {
+		return err
 	}
 
-	log.Printf("Creating Database Bucket relationships...")
-	if err := cdb.myDB.Create("relationships"); err != nil {
-		panic(err)
+	// Creating Database Bucket relationships
+	_, err = cdb.myDB.Exec(`
+		CREATE TABLE IF NOT EXISTS relationships (
+			ID INT AUTO_INCREMENT PRIMARY KEY,
+			Onion VARCHAR(255),
+			FromValue VARCHAR(255),
+			Type VARCHAR(255),
+			Identifier VARCHAR(255),
+			FirstSeen TIMESTAMP,
+			LastSeen TIMESTAMP
+		)
+	`)
+	if err != nil {
+		return err
 	}
 
 	// Allowing searching by the Identifier String
-	log.Printf("Indexing Identifier in relationships...")
-	rels := cdb.myDB.Use("relationships")
-	if err := rels.Index([]string{"Identifier"}); err != nil {
-		panic(err)
+	_, err = cdb.myDB.Exec(`
+		CREATE INDEX IF NOT EXISTS relationships_identifier_index ON relationships (Identifier)
+	`)
+	if err != nil {
+		return err
 	}
 
 	// Allowing searching by the Onion String
-	log.Printf("Indexing Onion in relationships...")
-	if err := rels.Index([]string{"Onion"}); err != nil {
-		panic(err)
+	_, err = cdb.myDB.Exec(`
+		CREATE INDEX IF NOT EXISTS relationships_onion_index ON relationships (Onion)
+	`)
+	if err != nil {
+		return err
 	}
 
 	// Allowing searching by the Type String
-	log.Printf("Indexing Type in relationships...")
-	if err := rels.Index([]string{"Type"}); err != nil {
-		panic(err)
+	_, err = cdb.myDB.Exec(`
+		CREATE INDEX IF NOT EXISTS relationships_type_index ON relationships (Type)
+	`)
+	if err != nil {
+		return err
 	}
 
 	// Allowing searching by the From String
-	log.Printf("Indexing From in relationships...")
-	if err := rels.Index([]string{"From"}); err != nil {
-		panic(err)
+	_, err = cdb.myDB.Exec(`
+		CREATE INDEX IF NOT EXISTS relationships_from_index ON relationships (FromValue)
+	`)
+	if err != nil {
+		return err
 	}
 
 	log.Printf("Database Setup Complete")
-
+	return nil
 }
 
 // CrawlRecord defines a spider entry in the database
 type CrawlRecord struct {
+	ID        int
 	URL       string
 	Timestamp time.Time
 	Page      model.Page
@@ -93,66 +121,91 @@ type CrawlRecord struct {
 // InsertCrawlRecord adds a new spider entry to the database and returns the
 // record id.
 func (cdb *CrawlDB) InsertCrawlRecord(url string, page *model.Page) (int, error) {
-	crawls := cdb.myDB.Use("crawls")
-	docID, err := crawls.Insert(map[string]interface{}{
-		"URL":       url,
-		"Timestamp": time.Now(),
-		"Page":      page})
-	return docID, err
+	// Serialize the Page to JSON
+	pageJSON, err := json.Marshal(page)
+	if err != nil {
+		return 0, err
+	}
+
+	stmt, err := cdb.myDB.Prepare(`
+		INSERT INTO crawls (URL, Timestamp, Page)
+		VALUES (?, ?, ?)
+	`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(url, time.Now(), pageJSON)
+	if err != nil {
+		return 0, err
+	}
+
+	docID, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+
+	return int(docID), nil
 }
 
 // GetCrawlRecord returns a CrawlRecord from the database given an ID.
 func (cdb *CrawlDB) GetCrawlRecord(id int) (CrawlRecord, error) {
-	crawls := cdb.myDB.Use("crawls")
-	readBack, err := crawls.Read(id)
-	if err == nil {
-		out, err := json.Marshal(readBack)
-		if err == nil {
-			var crawlRecord CrawlRecord
-			json.Unmarshal(out, &crawlRecord)
-			return crawlRecord, nil
-		}
+	row := cdb.myDB.QueryRow(`
+		SELECT ID, URL, Timestamp, Page
+		FROM crawls
+		WHERE ID = ?
+	`, id)
+
+	var crawlRecord CrawlRecord
+	var pageJSON string // Store serialized Page as a string
+	var timestampStr string
+
+	err := row.Scan(&crawlRecord.ID, &crawlRecord.URL, timestampStr, &pageJSON)
+	if err != nil {
 		return CrawlRecord{}, err
 	}
-	return CrawlRecord{}, err
+	crawlRecord.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
+
+	// Deserialize the Page from JSON
+	err = json.Unmarshal([]byte(pageJSON), &crawlRecord.Page)
+	if err != nil {
+		return CrawlRecord{}, err
+	}
+
+	return crawlRecord, nil
 }
 
 // HasCrawlRecord returns true if a given URL is associated with a crawl record
 // in the database. Only records created after the given duration are considered.
 func (cdb *CrawlDB) HasCrawlRecord(url string, duration time.Duration) (bool, int) {
-	var query interface{}
 	before := time.Now().Add(duration)
 
-	q := fmt.Sprintf(`{"eq":"%v", "in": ["URL"]}`, url)
-	json.Unmarshal([]byte(q), &query)
+	row := cdb.myDB.QueryRow(`
+        SELECT ID, Timestamp
+        FROM crawls
+        WHERE URL = ? AND Timestamp > ?
+    `, url, before)
 
-	queryResult := make(map[int]struct{}) // query result (document IDs) goes into map keys
-	crawls := cdb.myDB.Use("crawls")
-	if err := db.EvalQuery(query, crawls, &queryResult); err != nil {
+	var id int
+	var timestampStr string // Change the type to string
+	err := row.Scan(&id, &timestampStr)
+	if err == sql.ErrNoRows {
+		return false, 0
+	} else if err != nil {
 		panic(err)
 	}
 
-	for id := range queryResult {
-		// To get query result document, simply read it
-		readBack, err := crawls.Read(id)
-		if err == nil {
-			out, err := json.Marshal(readBack)
-			if err == nil {
-				var crawlRecord CrawlRecord
-				json.Unmarshal(out, &crawlRecord)
-
-				if crawlRecord.Timestamp.After(before) {
-					return true, id
-				}
-			}
-		}
-
+	// Convert the timestamp string to time.Time
+	//timestamp, err := time.Parse("2006-01-02 15:04:05", timestampStr)
+	if err != nil {
+		panic(err)
 	}
 
-	return false, 0
+	return true, id
 }
 
-// Relationship defines a correltion record in the Database.
+// Relationship defines a correlation record in the Database.
 type Relationship struct {
 	ID         int
 	Onion      string
@@ -164,41 +217,56 @@ type Relationship struct {
 }
 
 // InsertRelationship creates a new Relationship in the database.
-func (cdb *CrawlDB) InsertRelationship(onion string, from string, identiferType string, identifier string) (int, error) {
-
+// InsertRelationship creates a new Relationship in the database.
+func (cdb *CrawlDB) InsertRelationship(onion string, from string, identifierType string, identifier string) (int, error) {
+	// Check if the relationship already exists
 	rels, err := cdb.GetRelationshipsWithOnion(onion)
 
-	// If we have seen this before, we will update rather than adding a
-	// new relationship
+	// If we have seen this before, we will update rather than adding a new relationship
 	if err == nil {
 		for _, rel := range rels {
-			if rel.From == from && rel.Identifier == identifier && rel.Type == identiferType {
-				// Update the Relationships
-				log.Printf("Updating %s --- %s ---> %s (%s)", onion, from, identifier, identiferType)
-				relationships := cdb.myDB.Use("relationships")
-				err := relationships.Update(rel.ID, map[string]interface{}{
-					"Onion":      onion,
-					"From":       from,
-					"Type":       identiferType,
-					"Identifier": identifier,
-					"FirstSeen":  rel.FirstSeen,
-					"LastSeen":   time.Now()})
-				return rel.ID, err
+			if rel.From == from && rel.Identifier == identifier && rel.Type == identifierType {
+				// Update the Relationship
+				log.Printf("Updating %s --- %s ---> %s (%s)", onion, from, identifier, identifierType)
+				return cdb.UpdateRelationship(rel.ID, onion, from, identifierType, identifier)
 			}
 		}
 	}
 
-	// Otherwise Insert New
-	log.Printf("Inserting %s --- %s ---> %s (%s)", onion, from, identifier, identiferType)
-	relationships := cdb.myDB.Use("relationships")
-	docID, err := relationships.Insert(map[string]interface{}{
-		"Onion":      onion,
-		"From":       from,
-		"Type":       identiferType,
-		"Identifier": identifier,
-		"FirstSeen":  time.Now(),
-		"LastSeen":   time.Now()})
-	return docID, err
+	// Otherwise, insert a new relationship
+	log.Printf("Inserting %s --- %s ---> %s (%s)", onion, from, identifier, identifierType)
+	return cdb.InsertNewRelationship(onion, from, identifierType, identifier)
+}
+
+// InsertNewRelationship inserts a new Relationship in the database.
+func (cdb *CrawlDB) InsertNewRelationship(onion string, from string, identifierType string, identifier string) (int, error) {
+	result, err := cdb.myDB.Exec(`
+		INSERT INTO relationships (Onion, FromValue, Type, Identifier, FirstSeen, LastSeen)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, onion, from, identifierType, identifier, time.Now(), time.Now())
+
+	if err != nil {
+		return 0, err
+	}
+
+	lastInsertID, _ := result.LastInsertId()
+	return int(lastInsertID), nil
+}
+
+// UpdateRelationship updates an existing Relationship in the database.
+func (cdb *CrawlDB) UpdateRelationship(id int, onion string, from string, identifierType string, identifier string) (int, error) {
+	result, err := cdb.myDB.Exec(`
+		UPDATE relationships
+		SET Onion=?, FromValue=?, Type=?, Identifier=?, LastSeen=?
+		WHERE ID=?
+	`, onion, from, identifierType, identifier, time.Now(), id)
+
+	if err != nil {
+		return 0, err
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return int(rowsAffected), nil
 }
 
 // GetRelationshipsWithOnion returns all relationships with an Onion field matching
@@ -207,107 +275,175 @@ func (cdb *CrawlDB) GetRelationshipsWithOnion(onion string) ([]Relationship, err
 	return cdb.queryDB("Onion", onion)
 }
 
+func (cdb *CrawlDB) queryDB(field string, value string) ([]Relationship, error) {
+	fmt.Println(value)
+	rows, err := cdb.myDB.Query(`
+        SELECT ID, Onion, FromValue, Type, Identifier, FirstSeen, LastSeen
+        FROM relationships
+        WHERE Onion = ?
+    `, value)
+	if err != nil {
+		return nil, err
+	}
+	//fmt.Println(rows)
+	defer rows.Close()
+
+	var rels []Relationship
+	for rows.Next() {
+		var relationship Relationship
+		var firstSeenBytes, lastSeenBytes []byte // Change the types to []byte
+		err := rows.Scan(&relationship.ID, &relationship.Onion, &relationship.From, &relationship.Type, &relationship.Identifier, &firstSeenBytes, &lastSeenBytes)
+		fmt.Println("sahdasidk")
+		if err != nil {
+			return nil, err
+		}
+
+		// Convert the timestamp bytes to string and then to time.Time
+		if len(firstSeenBytes) > 0 {
+			relationship.FirstSeen, err = time.Parse("2006-01-02 15:04:05", string(firstSeenBytes))
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if len(lastSeenBytes) > 0 {
+			relationship.LastSeen, err = time.Parse("2006-01-02 15:04:05", string(lastSeenBytes))
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		rels = append(rels, relationship)
+	}
+	fmt.Println(rels)
+	return rels, nil
+}
+
 // GetUserRelationshipFromOnion reconstructs a user relationship from a given
 // identifier. fromonion is used as a filter to ensure that only user relationships
 // from a given onion are reconstructed.
 func (cdb *CrawlDB) GetUserRelationshipFromOnion(identifier string, fromonion string) (map[string]Relationship, error) {
-	results, err := cdb.GetRelationshipsWithOnion(identifier)
+	relationships := make(map[string]Relationship)
 
+	rows, err := cdb.myDB.Query(`
+		SELECT ID, Onion, FromValue, Type, Identifier, FirstSeen, LastSeen
+		FROM relationships
+		WHERE Onion = ? AND FromValue = ?
+	`, identifier, fromonion)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	relationships := make(map[string]Relationship)
-	for _, result := range results {
-		if result.From == fromonion {
-			relationships[result.Type] = result
+	for rows.Next() {
+		var relationship Relationship
+		err := rows.Scan(&relationship.ID, &relationship.Onion, &relationship.From, &relationship.Type, &relationship.Identifier, &relationship.FirstSeen, &relationship.LastSeen)
+		if err != nil {
+			return nil, err
 		}
+
+		relationships[relationship.Type] = relationship
 	}
+
 	return relationships, nil
 }
 
 // GetAllRelationshipsCount returns the total number of relationships stored in
 // the database.
 func (cdb *CrawlDB) GetAllRelationshipsCount() int {
-	queryResult := make(map[int]struct{}) // query result (document IDs) goes into map keys
-	relationships := cdb.myDB.Use("relationships")
+	var count int
 
-	if err := db.EvalAllIDs(relationships, &queryResult); err != nil {
+	row := cdb.myDB.QueryRow(`
+		SELECT COUNT(*)
+		FROM relationships
+	`)
+
+	err := row.Scan(&count)
+	if err != nil {
 		return 0
 	}
-	return len(queryResult)
+
+	return count
 }
 
 // GetRelationshipsCount returns the total number of relationships for a given
 // identifier.
 func (cdb *CrawlDB) GetRelationshipsCount(identifier string) int {
-	var query interface{}
+	var count int
 
-	q := fmt.Sprintf(`{"eq":"%v", "in": ["Identifier"]}`, identifier)
-	json.Unmarshal([]byte(q), &query)
+	row := cdb.myDB.QueryRow(`
+		SELECT COUNT(*)
+		FROM relationships
+		WHERE Identifier = ?
+	`, identifier)
 
-	queryResult := make(map[int]struct{}) // query result (document IDs) goes into map keys
-	relationships := cdb.myDB.Use("relationships")
-	if err := db.EvalQuery(query, relationships, &queryResult); err != nil {
+	err := row.Scan(&count)
+	if err != nil {
 		return 0
 	}
-	return len(queryResult)
+
+	return count
 }
 
-// GetRelationshipsWithIdentifier returns all relatioships associated with a
+// GetRelationshipsWithIdentifier returns all relationships associated with a
 // given identifier.
 func (cdb *CrawlDB) GetRelationshipsWithIdentifier(identifier string) ([]Relationship, error) {
+	var queryResult []Relationship
 
-	types, _ := cdb.queryDB("Type", identifier)
-	froms, _ := cdb.queryDB("From", identifier)
-	identifiers, _ := cdb.queryDB("Identifier", identifier)
+	rows, err := cdb.myDB.Query(`
+		SELECT ID, Onion, FromValue, Type, Identifier, FirstSeen, LastSeen
+		FROM relationships
+		WHERE Type = ? OR FromValue = ? OR Identifier = ?
+	`, identifier, identifier, identifier)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-	queryResult := append(types, froms...)
-	queryResult = append(queryResult, identifiers...)
+	for rows.Next() {
+		var relationship Relationship
+		var firstSeenBytes, lastSeenBytes []byte // Change the types to []byte
+		err := rows.Scan(&relationship.ID, &relationship.Onion, &relationship.From, &relationship.Type, &relationship.Identifier, &firstSeenBytes, &lastSeenBytes)
+		if err != nil {
+			return nil, err
+		}
+
+		// Convert the timestamp bytes to string and then to time.Time
+		if len(firstSeenBytes) > 0 {
+			relationship.FirstSeen, err = time.Parse("2006-01-02 15:04:05", string(firstSeenBytes))
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if len(lastSeenBytes) > 0 {
+			relationship.LastSeen, err = time.Parse("2006-01-02 15:04:05", string(lastSeenBytes))
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		queryResult = append(queryResult, relationship)
+	}
 
 	return queryResult, nil
 }
 
-func (cdb *CrawlDB) queryDB(field string, value string) ([]Relationship, error) {
-	var query interface{}
-
-	q := fmt.Sprintf(`{"eq":"%v", "in": ["%v"]}`, value, field)
-	json.Unmarshal([]byte(q), &query)
-
-	queryResult := make(map[int]struct{}) // query result (document IDs) goes into map keys
-	relationships := cdb.myDB.Use("relationships")
-	if err := db.EvalQuery(query, relationships, &queryResult); err != nil {
-		return nil, err
-	}
-	var rels []Relationship
-
-	for id := range queryResult {
-		// To get query result document, simply read it
-		readBack, err := relationships.Read(id)
-		if err == nil {
-			out, err := json.Marshal(readBack)
-			if err == nil {
-				var relationship Relationship
-				json.Unmarshal(out, &relationship)
-				relationship.ID = id
-				rels = append(rels, relationship)
-			}
-		}
-	}
-	return rels, nil
-}
-
 // DeleteRelationship deletes a relationship given the quad.
-func (cdb *CrawlDB) DeleteRelationship(onion string, from string, identiferType string, identifier string) error {
-	relationships := cdb.myDB.Use("relationships")
-	rels, err := cdb.GetRelationshipsWithOnion(onion)
-	if err == nil {
-		for _, rel := range rels {
-			if rel.From == from && rel.Type == identiferType && rel.Identifier == identifier {
-				err := relationships.Delete(rel.ID)
-				return err
-			}
-		}
+func (cdb *CrawlDB) DeleteRelationship(onion string, from string, identifierType string, identifier string) error {
+	stmt, err := cdb.myDB.Prepare(`
+		DELETE FROM relationships
+		WHERE Onion = ? AND FromValue = ? AND Type = ? AND Identifier = ?
+	`)
+	if err != nil {
+		return err
 	}
-	return errors.New("could not find record to delete")
+	defer stmt.Close()
+
+	_, err = stmt.Exec(onion, from, identifierType, identifier)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

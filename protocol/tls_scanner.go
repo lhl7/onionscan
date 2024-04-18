@@ -3,9 +3,9 @@ package protocol
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/s-rah/onionscan/config"
-	"github.com/s-rah/onionscan/report"
-	"github.com/s-rah/onionscan/utils"
+	"onionscanv3/config"
+	"onionscanv3/report"
+	"onionscanv3/utils"
 )
 
 type TLSProtocolScanner struct {

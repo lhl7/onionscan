@@ -1,11 +1,12 @@
 package deanonymization
 
 import (
-	"github.com/s-rah/onionscan/config"
-	"github.com/s-rah/onionscan/report"
-	"golang.org/x/crypto/openpgp"
+	"onionscanv3/config"
+	"onionscanv3/report"
 	"regexp"
 	"strings"
+
+	"golang.org/x/crypto/openpgp"
 )
 
 // PGPContentScan extracts any PGP public key blobs that may exist in the current
